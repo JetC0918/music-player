@@ -3,6 +3,9 @@ const page = document.body.dataset.page;
 const audio = document.querySelector("[data-audio]");
 const titleNode = document.querySelector("[data-track-title]");
 const metaNode = document.querySelector("[data-track-meta]");
+const API_BASE_URL = window.HARMONIA_API_BASE_URL || "https://music-api.gdstudio.xyz/api.php";
+const DEFAULT_SEARCH = "Taylor Swift";
+const DEFAULT_SOURCE = "kuwo";
 
 let lastRandomIndex = -1;
 
@@ -132,6 +135,16 @@ function formatTime(seconds = 0) {
 function AlbumArt(song) {
   const wrap = node("section", `album-art cover-${song.coverTheme || "sunset-valley"}`);
   wrap.setAttribute("aria-label", `${song.album} album artwork`);
+
+  if (song.coverUrl) {
+    const image = node("img", "album-image");
+    image.src = song.coverUrl;
+    image.alt = `${song.album} cover`;
+    image.loading = "lazy";
+    wrap.append(image);
+    return wrap;
+  }
+
   wrap.innerHTML = `
     <div class="cover-sky"></div>
     <div class="cover-sun"></div>
@@ -143,21 +156,75 @@ function AlbumArt(song) {
   return wrap;
 }
 
-function TrackInfo(song) {
+function TrackInfo(song, statusText = "") {
   const wrap = node("section", "track-info");
-  wrap.innerHTML = `
-    <p class="track-kicker">Now playing</p>
-    <h1>${song.title}</h1>
-    <p class="artist">${song.artist}</p>
-    <p class="album">${song.album}</p>
-    <div class="waveform" aria-hidden="true">
-      ${Array.from({ length: 58 }, (_, index) => {
-        const height = 18 + Math.round(Math.abs(Math.sin(index * 0.61)) * 34);
-        return `<span style="--bar-height:${height}px"></span>`;
-      }).join("")}
-    </div>
-  `;
+  const kicker = node("p", "track-kicker", statusText || "Now playing");
+  const title = node("h1", "", song.title);
+  const artist = node("p", "artist", song.artist);
+  const album = node("p", "album", song.album);
+  const waveform = node("div", "waveform");
+
+  waveform.setAttribute("aria-hidden", "true");
+  Array.from({ length: 58 }, (_, index) => {
+    const bar = node("span");
+    const height = 18 + Math.round(Math.abs(Math.sin(index * 0.61)) * 34);
+    bar.style.setProperty("--bar-height", `${height}px`);
+    waveform.append(bar);
+    return bar;
+  });
+
+  wrap.append(kicker, title, artist, album, waveform);
   return wrap;
+}
+
+function SearchPanel(state, onSearch, onSelect) {
+  const panel = node("section", "api-search");
+  const form = node("form", "search-form");
+  const input = node("input", "search-input");
+  const select = node("select", "source-select");
+  const submit = node("button", "search-button", "Search");
+  const resultList = node("div", "api-results");
+
+  input.type = "search";
+  input.name = "query";
+  input.value = state.query;
+  input.placeholder = "Search songs, artists, or albums";
+  input.setAttribute("aria-label", "Search songs, artists, or albums");
+
+  [
+    ["netease", "NetEase"],
+    ["kuwo", "Kuwo"],
+    ["joox", "JOOX"],
+    ["bilibili", "Bilibili"]
+  ].forEach(([value, label]) => {
+    const option = node("option", "", label);
+    option.value = value;
+    option.selected = state.source === value;
+    select.append(option);
+  });
+  select.setAttribute("aria-label", "Music source");
+
+  submit.type = "submit";
+  submit.disabled = state.loading;
+  form.append(input, select, submit);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    onSearch(input.value.trim(), select.value);
+  });
+
+  state.tracks.slice(0, 4).forEach((track, index) => {
+    const button = node("button", index === state.trackIndex ? "api-result is-active" : "api-result");
+    const title = node("strong", "", track.title);
+    const artist = node("span", "", track.artist);
+
+    button.type = "button";
+    button.append(title, artist);
+    button.addEventListener("click", () => onSelect(index, true));
+    resultList.append(button);
+  });
+
+  panel.append(form, resultList);
+  return panel;
 }
 
 function ProgressBar(state, onSeek) {
@@ -170,13 +237,14 @@ function ProgressBar(state, onSeek) {
   bar.type = "button";
   bar.setAttribute("aria-label", "Seek through track");
   bar.append(fill, thumb);
-  times.innerHTML = `<span data-current-time>${formatTime(state.currentTime)}</span><span>${formatTime(state.duration)}</span>`;
+  times.innerHTML = `<span data-current-time>${formatTime(state.currentTime)}</span><span data-duration-time>${formatTime(state.duration)}</span>`;
   wrap.append(bar, times);
 
   function paint() {
     const percent = state.duration ? (state.currentTime / state.duration) * 100 : 0;
     wrap.style.setProperty("--progress", `${Math.min(percent, 100)}%`);
     times.querySelector("[data-current-time]").textContent = formatTime(state.currentTime);
+    times.querySelector("[data-duration-time]").textContent = formatTime(state.duration);
   }
 
   bar.addEventListener("click", (event) => {
@@ -196,7 +264,7 @@ function PlaybackControls(actions) {
   const wrap = node("section", "playback-controls");
   const shuffle = iconButton("shuffle", "Shuffle");
   const previous = iconButton("previous", "Previous track");
-  const play = iconButton("pause", "Pause", "play-button");
+  const play = iconButton(actions.isPlaying() ? "pause" : "play", actions.isPlaying() ? "Pause" : "Play", "play-button");
   const next = iconButton("next", "Next track");
   const repeat = iconButton("repeat", "Repeat");
 
@@ -214,7 +282,7 @@ function PlaybackControls(actions) {
   return wrap;
 }
 
-function VolumeControl(state) {
+function VolumeControl(state, onChange) {
   const wrap = node("section", "volume-control");
   const low = node("span", "volume-icon");
   const slider = node("input", "volume-slider");
@@ -230,6 +298,7 @@ function VolumeControl(state) {
   slider.setAttribute("aria-label", "Volume");
   slider.addEventListener("input", () => {
     state.volume = Number(slider.value);
+    onChange(state.volume);
   });
 
   wrap.append(low, slider, high);
@@ -243,8 +312,10 @@ function LyricsPanel(song) {
   const expand = iconButton("expand", "Expand lyrics");
   const list = node("ol", "lyrics-list");
 
-  song.lyrics.forEach((line, index) => {
-    const item = node("li", index === song.currentLyric ? "is-current" : "", line);
+  const lines = song.lyrics?.length ? song.lyrics : [{ time: 0, text: "Search for a song to load lyrics." }];
+  lines.forEach((line, index) => {
+    const item = node("li", index === song.currentLyric ? "is-current" : "", line.text || line);
+    item.dataset.lyricIndex = index;
     list.append(item);
   });
 
@@ -253,22 +324,178 @@ function LyricsPanel(song) {
   return panel;
 }
 
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`API request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+function apiUrl(params) {
+  const url = new URL(API_BASE_URL);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, value);
+    }
+  });
+  return url.toString();
+}
+
+function parseArtist(value) {
+  if (Array.isArray(value)) return value.join(" / ");
+  return value || "Unknown Artist";
+}
+
+function preferHttps(url = "") {
+  return url.startsWith("http://") ? url.replace("http://", "https://") : url;
+}
+
+function stripLrcTime(line) {
+  return line.replace(/^\[[^\]]+\]\s*/, "").trim();
+}
+
+function parseLrcTimestamp(value = "") {
+  const match = value.match(/^(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!match) return null;
+
+  const minutes = Number(match[1]);
+  const seconds = Number(match[2]);
+  const fraction = Number(`0.${match[3] || "0"}`);
+  return minutes * 60 + seconds + fraction;
+}
+
+function isLyricCreditLine(text = "") {
+  return /^(lyrics|lyricist|composed|composer|produced|producer|arranged|作词|作曲|编曲|制作|监制|演唱)\b/i.test(text);
+}
+
+function parseTimedLrc(rawLyric = "") {
+  return rawLyric
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const timestampMatches = [...line.matchAll(/\[([^\]]+)\]/g)];
+      const text = stripLrcTime(line).replace(/\[[^\]]+\]/g, "").trim();
+      if (!timestampMatches.length || !text || isLyricCreditLine(text)) return [];
+
+      return timestampMatches
+        .map((match) => parseLrcTimestamp(match[1]))
+        .filter((time) => time !== null)
+        .map((time) => ({ time, text }));
+    })
+    .sort((a, b) => a.time - b.time);
+}
+
+function parseLyrics(rawLyric = "", translatedLyric = "") {
+  const primary = parseTimedLrc(rawLyric);
+  const translated = parseTimedLrc(translatedLyric);
+
+  return translated.length ? translated : primary;
+}
+
+function normalizeApiTrack(item) {
+  return {
+    id: item.id,
+    title: item.name || "Untitled Track",
+    artist: parseArtist(item.artist),
+    album: item.album || "Unknown Album",
+    source: item.source || DEFAULT_SOURCE,
+    picId: item.pic_id,
+    lyricId: item.lyric_id || item.id,
+    duration: 0,
+    startAt: 0,
+    coverTheme: "sunset-valley",
+    src: "",
+    lyrics: [],
+    currentLyric: 0
+  };
+}
+
+function normalizeFallbackTrack(song) {
+  return {
+    ...song,
+    source: song.source || "demo",
+    artist: Array.isArray(song.artist) ? song.artist.join(" / ") : song.artist,
+    lyrics: (song.lyrics || []).map((line, index) => (
+      typeof line === "string" ? { time: index * 12, text: line } : line
+    )),
+    currentLyric: song.currentLyric || 0
+  };
+}
+
+async function searchTracks(query, source) {
+  const data = await fetchJson(apiUrl({
+    types: "search",
+    source,
+    name: query,
+    count: 12,
+    pages: 1
+  }));
+
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error("No songs found");
+  }
+
+  return data.map(normalizeApiTrack);
+}
+
+async function enrichTrack(track) {
+  if (!track || track.source === "demo") return track;
+  const nextTrack = { ...track };
+
+  const [urlData, picData, lyricData] = await Promise.allSettled([
+    fetchJson(apiUrl({ types: "url", source: track.source, id: track.id, br: 320 })),
+    track.picId ? fetchJson(apiUrl({ types: "pic", source: track.source, id: track.picId, size: 500 })) : Promise.resolve(null),
+    track.lyricId ? fetchJson(apiUrl({ types: "lyric", source: track.source, id: track.lyricId })) : Promise.resolve(null)
+  ]);
+
+  if (urlData.status === "fulfilled" && urlData.value?.url) {
+    nextTrack.src = preferHttps(urlData.value.url);
+  }
+
+  if (picData.status === "fulfilled" && picData.value?.url) {
+    nextTrack.coverUrl = preferHttps(picData.value.url);
+  }
+
+  if (lyricData.status === "fulfilled") {
+    const lyrics = parseLyrics(lyricData.value?.lyric, lyricData.value?.tlyric);
+    if (lyrics.length) {
+      nextTrack.lyrics = lyrics;
+      nextTrack.currentLyric = Math.min(4, lyrics.length - 1);
+    }
+  }
+
+  return nextTrack;
+}
+
 function initPlayer() {
   const root = document.querySelector("[data-player-root]");
   if (!root) return;
 
+  const playerAudio = new Audio();
+  playerAudio.preload = "metadata";
+
   const state = {
+    tracks: songs.map(normalizeFallbackTrack),
     trackIndex: 0,
     currentTime: songs[0]?.startAt || 0,
     duration: songs[0]?.duration || 0,
     volume: 0.76,
-    playing: true,
-    repeat: false
+    playing: false,
+    repeat: false,
+    query: DEFAULT_SEARCH,
+    source: DEFAULT_SOURCE,
+    loading: false,
+    statusText: "Ready"
   };
   let progressComponent;
 
   function currentSong() {
-    return songs[state.trackIndex] || songs[0];
+    return state.tracks[state.trackIndex] || normalizeFallbackTrack(songs[0] || {
+      title: "No track loaded",
+      artist: "Harmonia",
+      album: "Search to begin",
+      lyrics: []
+    });
   }
 
   function paintProgress() {
@@ -277,13 +504,95 @@ function initPlayer() {
     progressComponent?.update();
   }
 
-  function loadTrack(index, keepPlaying = state.playing) {
-    state.trackIndex = (index + songs.length) % songs.length;
+  function lyricIndexForTime(song, time) {
+    if (!song.lyrics?.length) return 0;
+
+    let activeIndex = 0;
+    for (let index = 0; index < song.lyrics.length; index++) {
+      if ((song.lyrics[index].time || 0) <= time + 0.25) {
+        activeIndex = index;
+      } else {
+        break;
+      }
+    }
+
+    return activeIndex;
+  }
+
+  function syncLyrics(time, shouldScroll = true) {
+    const song = currentSong();
+    const nextIndex = lyricIndexForTime(song, time);
+    if (song.currentLyric === nextIndex) return;
+
+    song.currentLyric = nextIndex;
+    root.querySelectorAll(".lyrics-list li").forEach((item) => {
+      item.classList.toggle("is-current", Number(item.dataset.lyricIndex) === nextIndex);
+    });
+
+    const activeLine = root.querySelector(`.lyrics-list li[data-lyric-index="${nextIndex}"]`);
+    if (shouldScroll && activeLine) {
+      activeLine.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
+  async function loadTrack(index, keepPlaying = state.playing) {
+    if (!state.tracks.length) return;
+    state.trackIndex = (index + state.tracks.length) % state.tracks.length;
     const song = currentSong();
     state.currentTime = song.startAt || 0;
     state.duration = song.duration || 0;
     state.playing = keepPlaying;
+    state.statusText = "Loading song";
     render();
+
+    try {
+      const enrichedTrack = await enrichTrack(song);
+      state.tracks[state.trackIndex] = enrichedTrack;
+      const playableSrc = enrichedTrack.src || demoTone(enrichedTrack.toneHz || 220);
+      playerAudio.src = playableSrc;
+      playerAudio.volume = state.volume;
+      if (keepPlaying) {
+        await playerAudio.play().catch(() => {
+          state.playing = false;
+          state.statusText = "Press play to start";
+        });
+      } else {
+        playerAudio.pause();
+      }
+      if (state.statusText !== "Press play to start") {
+        state.statusText = enrichedTrack.src ? "Ready to play" : "Demo tone";
+      }
+    } catch (error) {
+      playerAudio.src = demoTone(song.toneHz || 220);
+      if (keepPlaying) {
+        playerAudio.play().catch(() => {});
+      }
+      state.statusText = "API fallback";
+    }
+
+    state.tracks[state.trackIndex].currentLyric = lyricIndexForTime(state.tracks[state.trackIndex], state.currentTime);
+    render();
+  }
+
+  async function runSearch(query = state.query, source = state.source) {
+    if (!query) return;
+    state.query = query;
+    state.source = source;
+    state.loading = true;
+    state.statusText = "Searching";
+    render();
+
+    try {
+      state.tracks = await searchTracks(query, source);
+      state.loading = false;
+      await loadTrack(0, false);
+    } catch (error) {
+      state.tracks = songs.map(normalizeFallbackTrack);
+      state.loading = false;
+      state.trackIndex = 0;
+      state.statusText = "Using fallback songs";
+      render();
+    }
   }
 
   function render() {
@@ -295,45 +604,67 @@ function initPlayer() {
     const center = node("div", "player-center");
     progressComponent = ProgressBar(state, (time) => {
       state.currentTime = time;
+      if (Number.isFinite(playerAudio.duration)) {
+        playerAudio.currentTime = time;
+      }
       paintProgress();
+      syncLyrics(time, true);
     });
 
     center.append(
-      TrackInfo(song),
+      SearchPanel(state, runSearch, loadTrack),
+      TrackInfo(song, state.statusText),
       progressComponent,
       PlaybackControls({
         previous: () => loadTrack(state.trackIndex - 1),
         next: () => loadTrack(state.trackIndex + 1),
-        shuffle: () => loadTrack(Math.floor(Math.random() * songs.length)),
+        shuffle: () => loadTrack(Math.floor(Math.random() * state.tracks.length)),
         repeat: () => {
           state.repeat = !state.repeat;
           root.classList.toggle("is-repeat", state.repeat);
         },
         toggle: () => {
           state.playing = !state.playing;
+          if (state.playing) {
+            playerAudio.play().catch(() => {});
+          } else {
+            playerAudio.pause();
+          }
         },
         isPlaying: () => state.playing
       }),
-      VolumeControl(state)
+      VolumeControl(state, (volume) => {
+        playerAudio.volume = volume;
+      })
     );
 
     root.append(menu, AlbumArt(song), center, LyricsPanel(song));
+    window.requestAnimationFrame(() => {
+      root.querySelector(".lyrics-list .is-current")?.scrollIntoView({ block: "center" });
+    });
   }
 
   render();
-  window.setInterval(() => {
-    if (!state.playing || !state.duration) return;
-    state.currentTime += 1;
-    if (state.currentTime >= state.duration) {
-      if (state.repeat) {
-        state.currentTime = 0;
-      } else {
-        loadTrack(state.trackIndex + 1, true);
-        return;
-      }
-    }
+
+  playerAudio.addEventListener("loadedmetadata", () => {
+    state.duration = Number.isFinite(playerAudio.duration) ? playerAudio.duration : currentSong().duration || 0;
     paintProgress();
-  }, 1000);
+  });
+  playerAudio.addEventListener("timeupdate", () => {
+    state.currentTime = playerAudio.currentTime;
+    paintProgress();
+    syncLyrics(state.currentTime, true);
+  });
+  playerAudio.addEventListener("ended", () => {
+    if (state.repeat) {
+      playerAudio.currentTime = 0;
+      playerAudio.play().catch(() => {});
+      return;
+    }
+    loadTrack(state.trackIndex + 1, true);
+  });
+
+  runSearch(DEFAULT_SEARCH, DEFAULT_SOURCE);
 }
 
 if (page === "radio") initRadio();

@@ -618,12 +618,112 @@ audio {
   filter: hue-rotate(18deg) saturate(0.85);
 }
 
+.album-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .player-center {
   display: grid;
   align-content: center;
-  gap: 18px;
+  gap: 14px;
   min-width: 0;
   padding: 20px 8px;
+}
+
+.api-search {
+  display: grid;
+  gap: 8px;
+}
+
+.search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 78px;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-input,
+.source-select,
+.search-button {
+  min-height: 36px;
+  border: 1px solid rgba(123, 46, 27, 0.12);
+  border-radius: 9px;
+  color: #34262a;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.search-input {
+  width: 100%;
+  padding: 0 12px;
+  outline: none;
+}
+
+.source-select {
+  padding: 0 8px;
+}
+
+.search-button {
+  color: #fff7fb;
+  cursor: pointer;
+  font-weight: 800;
+  background: #7b2e1b;
+}
+
+.search-button:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.search-input:focus,
+.source-select:focus,
+.search-button:focus-visible {
+  border-color: rgba(123, 46, 27, 0.38);
+  box-shadow: 0 0 0 3px rgba(123, 46, 27, 0.12);
+  outline: none;
+}
+
+.api-results {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.api-result {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: rgba(47, 41, 50, 0.74);
+  cursor: pointer;
+  background: rgba(255, 247, 244, 0.42);
+  text-align: left;
+}
+
+.api-result strong,
+.api-result span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-result strong {
+  color: #34262a;
+  font-size: 0.78rem;
+}
+
+.api-result span {
+  font-size: 0.7rem;
+}
+
+.api-result:hover,
+.api-result.is-active {
+  background: rgba(123, 46, 27, 0.12);
 }
 
 .track-info {
@@ -633,7 +733,11 @@ audio {
 }
 
 .track-kicker {
-  display: none;
+  margin: 0;
+  color: rgba(123, 46, 27, 0.72);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .track-info h1 {
@@ -991,6 +1095,14 @@ audio {
 
   .track-info {
     text-align: center;
+  }
+
+  .search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .api-results {
+    grid-template-columns: 1fr;
   }
 
   .track-info h1 {
