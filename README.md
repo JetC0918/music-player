@@ -10,8 +10,12 @@ Harmonia is a responsive, cinematic music player webpage built with plain HTML, 
 - Track title, artist, album, waveform, progress bar, timestamps, and volume control
 - Frosted-glass lyrics panel with the current lyric highlighted
 - Live song search through the GD Studio music API
+- Cross-source search with source switching, pagination, and batch queue import
 - API-powered audio URLs, album covers, and timestamped LRC lyrics
-- Dynamic lyric highlighting that follows playback and seeking
+- Dynamic lyric highlighting that follows playback and seeking, with manual-scroll lockback
+- Persistent playback queue with add, remove, clear, shuffle, repeat, and ghost-play prevention
+- Favorites list with its own playback progress, playback mode, and batch controls
+- Cloudflare Pages Function proxy with smart edge caching for valid search results
 - Clean reusable JavaScript component functions:
   - `AlbumArt`
   - `TrackInfo`
@@ -25,12 +29,14 @@ Harmonia is a responsive, cinematic music player webpage built with plain HTML, 
 
 ```text
 music-player/
-  index.html
   player.html
-  radio.html
   styles.css
   app.js
+  lib/harmonia-core.js
+  functions/api/[[path]].js
   songs.js
+  tests/harmonia-core.test.mjs
+  package.json
   README.md
 ```
 
@@ -65,7 +71,17 @@ The player calls:
 
 The API documentation notes a dynamic request limit of about 50 requests per 5 minutes, so avoid aggressive polling.
 
-The default search source is `kuwo` because it returned valid results during testing. The app exposes a config hook if you later need to route requests through your own proxy:
+The app calls `/api` first. On Cloudflare Pages, `functions/api/[[path]].js` proxies those requests to GD Studio and uses the Cloudflare Cache API for search results.
+
+The edge proxy:
+
+- Normalizes search cache keys by keeping only `types`, `source`, `name`, `count`, and `pages`
+- Strips URL-signature/noise parameters such as `sign`, `signature`, `timestamp`, and `_`
+- Caches only valid non-empty search arrays
+- Avoids caching empty responses, API busy responses, and upstream errors
+- Passes `url`, `pic`, and `lyric` calls through without caching
+
+The default search source is `kuwo` because it returned valid results during testing. The app exposes a config hook if you later need to route requests through another proxy:
 
 ```html
 <script>
@@ -91,6 +107,20 @@ You can still edit `songs.js` to change the fallback tracks shown when the API i
 
 If `src` is empty, the demo tone fallback keeps the UI functional for testing.
 
+## Verify
+
+Run the JavaScript syntax check:
+
+```powershell
+npm run check
+```
+
+Run the helper tests:
+
+```powershell
+npm test
+```
+
 ## Deploy
 
-Harmonia is a static site, so it can be deployed to GitHub Pages, Netlify, Vercel, Cloudflare Pages, or any static hosting provider.
+For the full API proxy and edge cache behavior, deploy Harmonia on Cloudflare Pages. Other static hosts can still run the UI, but they will use the direct API fallback unless you provide a compatible proxy through `window.HARMONIA_API_BASE_URL`.
