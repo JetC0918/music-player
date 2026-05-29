@@ -1,6 +1,11 @@
 # Harmonia
 
-Harmonia is a responsive, cinematic music player webpage built with plain HTML, CSS, and JavaScript. The interface is designed to feel calm, premium, and immersive, with a soft gradient backdrop, compact album artwork, custom playback controls, and a frosted lyrics panel.
+Harmonia is a responsive, cinematic web music experience built with plain HTML, CSS, and JavaScript. It has two separate pages: an on-demand music player for searching and queueing songs, and a live-style radio page for automatic listening, time-based vibes, track planning, and hourly news breaks.
+
+## Pages
+
+- `player.html` - On-demand music player with search, synced lyrics, queue management, favorites, and playback controls.
+- `radio.html` - Automatic radio mode with Malaysia-time vibe selection, planned track transitions, and hourly AI-prepared news breaks from 8am to 8pm GMT+8.
 
 ## Features
 
@@ -16,6 +21,9 @@ Harmonia is a responsive, cinematic music player webpage built with plain HTML, 
 - Persistent playback queue with add, remove, clear, shuffle, repeat, and ghost-play prevention
 - Favorites list with its own playback progress, playback mode, and batch controls
 - Cloudflare Pages Function proxy with smart edge caching for valid search results
+- Radio page with time-of-day vibe selection for Malaysia time
+- Hourly AI-prepared news break from 8am to 8pm GMT+8
+- Track planner with crossfade markers for smoother transitions
 - Clean reusable JavaScript component functions:
   - `AlbumArt`
   - `TrackInfo`
@@ -30,10 +38,12 @@ Harmonia is a responsive, cinematic music player webpage built with plain HTML, 
 ```text
 music-player/
   player.html
+  radio.html
   styles.css
   app.js
   lib/harmonia-core.js
   functions/api/[[path]].js
+  functions/api/news.js
   songs.js
   tests/harmonia-core.test.mjs
   package.json
@@ -80,6 +90,26 @@ The edge proxy:
 - Caches only valid non-empty search arrays
 - Avoids caching empty responses, API busy responses, and upstream errors
 - Passes `url`, `pic`, and `lyric` calls through without caching
+
+## Radio
+
+Open `radio.html` for the live radio page.
+
+Radio behavior:
+
+- Chooses a search vibe from Malaysia time, such as morning warm-up, workday energy, evening drive, or night soft signal
+- Builds a planned track sequence with crossfade markers
+- Starts playback from a user gesture, then keeps the stream moving automatically
+- Preloads the next track and crossfades near the end of the current one
+- Checks every minute for hourly news at `:00` from 8am to 8pm GMT+8
+
+The news endpoint is:
+
+```text
+/api/news
+```
+
+On Cloudflare Pages it fetches recent Malaysia and international headlines through GDELT. If a Cloudflare Workers AI binding named `AI` is available, it prepares a calm 90-second radio script. Without that binding, it returns a headline-based fallback script so the radio page still works.
 
 The default search source is `kuwo` because it returned valid results during testing. The app exposes a config hook if you later need to route requests through another proxy:
 

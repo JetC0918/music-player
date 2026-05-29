@@ -1,6 +1,9 @@
 import {
+  buildRadioPlan,
+  getRadioVibe,
   lyricIndexForTime as getLyricIndexForTime,
   sanitizeQueue,
+  shouldPlayHourlyNews,
   toggleFavorite,
   trackKey
 } from "./lib/harmonia-core.js";
@@ -99,24 +102,208 @@ function randomSong() {
 }
 
 function initRadio() {
-  const playButton = document.querySelector("[data-radio-play]");
-  const nextButton = document.querySelector("[data-radio-next]");
-  const statusNode = document.querySelector("[data-radio-status]");
-  const lampNode = document.querySelector("[data-radio-lamp]");
+  const root = document.querySelector("[data-radio-root]");
+  if (!root) return;
 
-  function tuneRandom() {
-    const song = randomSong();
-    if (!song) return;
+  const state = {
+    started: false,
+    loading: false,
+    vibe: getRadioVibe(),
+    plan: [],
+    currentIndex: -1,
+    currentTrack: null,
+    nextTrack: null,
+    newsScript: "",
+    lastNewsKey: "",
+    status: "Ready for the live signal",
+    crossfadeSeconds: 8
+  };
+  const currentAudio = new Audio();
+  const nextAudio = new Audio();
+  let crossfadeTimer = null;
 
-    setTrack(song, true);
-    statusNode.textContent = "On air";
-    lampNode.classList.add("is-live");
-    playButton.textContent = "Restart Radio";
+  currentAudio.preload = "metadata";
+  nextAudio.preload = "auto";
+
+  function renderRadio() {
+    root.replaceChildren();
+
+    const panel = node("section", "radio-console");
+    const header = node("div", "radio-header");
+    const copy = node("div", "radio-copy");
+    const controls = node("div", "radio-actions");
+    const start = node("button", "search-button", state.started ? "Next track" : "Start radio");
+    const refresh = node("button", "mini-button", "Refresh vibe");
+    const news = node("button", "mini-button", "News now");
+    const planner = node("section", "radio-planner");
+
+    copy.append(
+      node("p", "track-kicker", state.status),
+      node("h1", "", "Harmonia Radio"),
+      node("p", "radio-vibe", `${state.vibe.label} · GMT+8`)
+    );
+
+    start.type = "button";
+    start.disabled = state.loading;
+    start.addEventListener("click", () => startRadio(true));
+    refresh.type = "button";
+    refresh.addEventListener("click", () => loadVibePlan(true));
+    news.type = "button";
+    news.addEventListener("click", () => playNewsSegment(true));
+    controls.append(start, refresh, news);
+    header.append(copy, controls);
+
+    const track = state.currentTrack || {
+      title: "Signal warming up",
+      artist: "Harmonia",
+      album: "Live radio"
+    };
+
+    planner.append(
+      TrackInfo(track, state.started ? "On air" : "Radio idle"),
+      node("p", "radio-note", "Automatic vibe selection changes through the day. Hourly news runs at :00 from 8am to 8pm Malaysia time.")
+    );
+
+    const list = node("div", "queue-list radio-plan-list");
+    state.plan.slice(0, 5).forEach((trackItem, index) => {
+      const item = node("article", index === state.currentIndex ? "queue-item is-active" : "queue-item");
+      const main = node("div", "queue-main");
+      main.append(node("strong", "", trackItem.title), node("span", "", `${trackItem.artist} · starts ${formatTime(trackItem.startsAt)}`));
+      item.append(main);
+      list.append(item);
+    });
+    planner.append(list);
+
+    panel.append(header, AlbumArt(track), planner, LyricsPanel(track));
+    root.append(panel);
   }
 
-  playButton.addEventListener("click", tuneRandom);
-  nextButton.addEventListener("click", tuneRandom);
-  audio.addEventListener("ended", tuneRandom);
+  async function loadVibePlan(force = false) {
+    state.vibe = getRadioVibe();
+    if (state.loading && !force) return;
+    state.loading = true;
+    state.status = "Planning tracks";
+    renderRadio();
+
+    try {
+      const results = await searchTracks(state.vibe.query, DEFAULT_SOURCE, 1);
+      const enriched = await Promise.all(results.slice(0, 6).map((track) => enrichTrack(track)));
+      state.plan = buildRadioPlan(enriched, { crossfadeSeconds: state.crossfadeSeconds });
+      state.status = "Track plan ready";
+    } catch (error) {
+      state.plan = buildRadioPlan(songs.map(normalizeFallbackTrack), { crossfadeSeconds: state.crossfadeSeconds });
+      state.status = "Using fallback radio plan";
+    }
+
+    state.loading = false;
+    renderRadio();
+  }
+
+  async function startRadio(forceNext = false) {
+    if (!state.plan.length) {
+      await loadVibePlan(true);
+    }
+    if (!state.plan.length) return;
+
+    state.started = true;
+    state.currentIndex = forceNext ? (state.currentIndex + 1) % state.plan.length : Math.max(0, state.currentIndex);
+    const track = state.plan[state.currentIndex];
+    state.currentTrack = track;
+    currentAudio.src = track.src || demoTone(track.toneHz || 220);
+    currentAudio.volume = 1;
+    await currentAudio.play().catch(() => {
+      state.status = "Press start to allow playback";
+    });
+    state.status = "On air";
+    preloadNextTrack();
+    renderRadio();
+  }
+
+  function preloadNextTrack() {
+    if (!state.plan.length) return;
+    const nextIndex = (state.currentIndex + 1) % state.plan.length;
+    state.nextTrack = state.plan[nextIndex];
+    nextAudio.src = state.nextTrack.src || demoTone(state.nextTrack.toneHz || 220);
+    nextAudio.volume = 0;
+  }
+
+  function beginCrossfade() {
+    if (crossfadeTimer || !state.nextTrack) return;
+    const steps = 24;
+    let step = 0;
+    nextAudio.currentTime = 0;
+    nextAudio.play().catch(() => {});
+    crossfadeTimer = window.setInterval(() => {
+      step += 1;
+      const ratio = Math.min(1, step / steps);
+      currentAudio.volume = 1 - ratio;
+      nextAudio.volume = ratio;
+
+      if (ratio >= 1) {
+        window.clearInterval(crossfadeTimer);
+        crossfadeTimer = null;
+        currentAudio.pause();
+        currentAudio.src = nextAudio.src;
+        currentAudio.currentTime = nextAudio.currentTime;
+        currentAudio.volume = 1;
+        nextAudio.pause();
+        nextAudio.removeAttribute("src");
+        currentAudio.play().catch(() => {});
+        state.currentIndex = (state.currentIndex + 1) % state.plan.length;
+        state.currentTrack = state.plan[state.currentIndex];
+        preloadNextTrack();
+        renderRadio();
+      }
+    }, (state.crossfadeSeconds * 1000) / steps);
+  }
+
+  async function playNewsSegment(force = false) {
+    const now = new Date();
+    const newsKey = now.toISOString().slice(0, 13);
+    if (!force && (!shouldPlayHourlyNews(now) || state.lastNewsKey === newsKey)) return;
+    state.lastNewsKey = newsKey;
+    state.status = "News break";
+    renderRadio();
+
+    currentAudio.pause();
+    try {
+      const script = await fetchJson(new URL("/api/news", window.location.origin).toString());
+      state.newsScript = script.script || "Here is your Harmonia news break. Malaysia first, then the world.";
+    } catch (error) {
+      state.newsScript = "Here is your Harmonia news break. Malaysia first, then international headlines. Connect Cloudflare AI to generate live summaries.";
+    }
+
+    if ("speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(state.newsScript);
+      utterance.rate = 0.95;
+      utterance.onend = () => {
+        state.status = "Back to music";
+        currentAudio.play().catch(() => {});
+        renderRadio();
+      };
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    } else {
+      window.setTimeout(() => currentAudio.play().catch(() => {}), 90000);
+    }
+    renderRadio();
+  }
+
+  currentAudio.addEventListener("timeupdate", () => {
+    const remaining = currentAudio.duration - currentAudio.currentTime;
+    if (Number.isFinite(remaining) && remaining <= state.crossfadeSeconds) {
+      beginCrossfade();
+    }
+  });
+  currentAudio.addEventListener("ended", () => startRadio(true));
+
+  window.setInterval(() => {
+    state.vibe = getRadioVibe();
+    playNewsSegment(false);
+  }, 60 * 1000);
+
+  loadVibePlan(true);
+  renderRadio();
 }
 
 function node(tagName, className, content) {

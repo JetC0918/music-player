@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   isValidSearchPayload,
+  getRadioVibe,
   lyricIndexForTime,
   normalizeSearchParams,
+  shouldPlayHourlyNews,
+  buildRadioPlan,
   sanitizeQueue,
   toggleFavorite
 } from "../lib/harmonia-core.js";
@@ -56,4 +59,27 @@ test("toggles favorites without duplicates", () => {
 
   assert.equal(first.length, 1);
   assert.equal(second.length, 0);
+});
+
+test("selects radio vibe by Malaysia time", () => {
+  assert.equal(getRadioVibe(new Date("2026-05-29T05:00:00.000Z")).id, "workday-energy");
+  assert.equal(getRadioVibe(new Date("2026-05-29T14:00:00.000Z")).id, "night-soft");
+  assert.equal(getRadioVibe(new Date("2026-05-29T23:30:00.000Z")).id, "morning-warm");
+});
+
+test("triggers hourly news only at minute zero from 8am to 8pm GMT+8", () => {
+  assert.equal(shouldPlayHourlyNews(new Date("2026-05-29T00:00:00.000Z")), true);
+  assert.equal(shouldPlayHourlyNews(new Date("2026-05-29T00:04:00.000Z")), false);
+  assert.equal(shouldPlayHourlyNews(new Date("2026-05-29T13:00:00.000Z")), false);
+});
+
+test("builds a seamless radio plan with crossfade markers", () => {
+  const plan = buildRadioPlan([
+    { id: "a", duration: 180 },
+    { id: "b", duration: 200 }
+  ], { crossfadeSeconds: 8 });
+
+  assert.equal(plan[0].startsAt, 0);
+  assert.equal(plan[0].fadeOutAt, 172);
+  assert.equal(plan[1].startsAt, 172);
 });
